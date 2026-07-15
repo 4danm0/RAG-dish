@@ -1,5 +1,4 @@
 # main.py
-
 from parser import get_all_posts
 from indexer import build_index
 from searcher import search_documents, ask_ai_chef

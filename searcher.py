@@ -1,5 +1,4 @@
 # searcher.py
-
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 from openai import OpenAI
@@ -17,28 +16,38 @@ def search_documents(query, limit=3, tag_filter=None):
     if tag_filter:
         q_filter = Filter(must=[FieldCondition(key="tag", match=MatchValue(value=tag_filter))])
         
-    results = client_qdrant.search(
+    response_qdrant = client_qdrant.query_points(
         collection_name=COLLECTION_NAME,
-        query_vector=query_vector,
+        query=query_vector,
         query_filter=q_filter,
         limit=limit
     )
-    return results
+    
+    # Возвращаем только список точек .points, чтобы сохранить 100% совместимость
+    # со свойствами .score и .payload в файлах app.py и main.py
+    return response_qdrant.points
 
-def ask_ai_chef(query, search_results):
+def ask_ai_chef(query, search_results, custom_prompt=None):
+    """Режим RAG: отправляем лучшие рецепты из базы в DeepSeek Flash."""
     if not search_results:
         return "К сожалению, в базе нет подходящих рецептов."
         
+    # Собираем контекст из найденных постов
     context = ""
     for idx, hit in enumerate(search_results, 1):
         context += f"Рецепт {idx} (Паблик: {hit.payload['tag']}):\n{hit.payload['text']}\n\n"
         
-    system_prompt = "Ты профессиональный повар. Используй ТОЛЬКО предложенные рецепты из контекста, чтобы ответить на запрос пользователя. Скомпилируй лучший вариант, опиши шаги и дай список покупок."
+    # Используем кастомный промпт, если он передан, иначе берем стандартный
+    if custom_prompt and custom_prompt.strip():
+        system_prompt = custom_prompt
+    else:
+        system_prompt = "Ты профессиональный повар. Используй ТОЛЬКО предложенные рецепты из контекста, чтобы ответить на запрос пользователя. " \
+        "Скомпилируй лучший вариант, опиши шаги и дай список покупок. Если документы не отвечают на запрос пользователя- скажи об этом, не придумывай ответ."
+        
     user_prompt = f"Запрос пользователя: {query}\n\nКонтекст (рецепты из ВК):\n{context}"
     
     client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
     
-    print("Шеф-повар DeepSeek думает...")
     response = client.chat.completions.create(
         model=DEEPSEEK_MODEL,
         messages=[
